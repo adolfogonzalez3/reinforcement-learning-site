@@ -2,9 +2,9 @@
 <canvas #canvas></canvas>
 
 <p>Pos: {{this.widthX.toPrecision(1)}} Vel: {{this.velocityX.toLocaleString()}} Rot: {{this.rotation.toLocaleString()}}</p>
-<p>Random Rate: {{this.randomRate}}</p>
-<p>Cost: {{this.cost}}</p>
+<p>Random Rate: {{this.randomRate}} Current Game steps: {{this.currentSteps}}</p>
+<p>Cost: {{this.cost}} Current Agent steps: {{this.currentGameSteps}}</p>
 <p>Wins: {{this.wins}} Losses: {{this.losses}} Timeouts: {{this.timeouts}}</p>
-<p>{{this.terminated}}</p>
+<p>Current Game No: {{this.currentGameNum}}</p>
 
 <canvas #chart></canvas>

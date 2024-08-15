@@ -9,17 +9,15 @@ export function accumulate<T,R>(src: T[], func: (prev: R, curr: T) => R, initial
 }
 
 export function gather<T>(src: T[], indices: number[]) {
-    const result = []
-    for (const idx of indices) {
-        const val = src[idx]
-        if (val !== undefined) {
-            result.push(val)
-        }
+    const result = new Array<T>(indices.length)
+    for (let i = 0; i < indices.length; i++) {
+        const idx = indices[i]
+        result[i] = src[idx]
     }
     return result
 }
 
-export function generateRange(min: number, max: number) {
+export function generateRangeExclusive(min: number, max: number) {
     const result = []
     for (let i = min; i < max; i++) {
         result.push(i)
@@ -28,18 +26,28 @@ export function generateRange(min: number, max: number) {
 }
 
 export function choicesWeighted(num: number, weights: number[]) {
-    const total_sum = weights.reduce((p, c) => p + c)
-    const rands = new Array(num)
-    for (let i = 0; i < num; i++) {
-        rands[i] = Math.random() * total_sum
+    if (num >= weights.length) {
+        return generateRangeExclusive(0, weights.length)
     }
-    
-    const sorted_rands = rands.sort()
-    let running_sum = 0
-    const choices = new Array(num)
+    const choices = new Array<number>(num)
+    const weights_indexed = weights.map((v, i) => ({w: v, idx: i}))
+    let total_sum = weights.reduce((p, c) => p + c)
     for (let i = 0; i < num; i++) {
-
+        const choice = Math.random() * total_sum
+        let running_sum = 0
+        for (let j = 0; j < weights_indexed.length; j++) {
+            const widx = weights_indexed[j]
+            running_sum += widx.w
+            if (choice < running_sum) {
+                choices[i] = widx.idx
+                total_sum -= widx.w
+                weights_indexed[j] = weights_indexed[weights_indexed.length - 1]
+                weights_indexed.pop()
+                break
+            }
+        }
     }
+    return choices
 }
 
 export function ensureArray<T>(x?: T | T[]) {

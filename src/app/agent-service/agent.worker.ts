@@ -20,6 +20,9 @@ import {
   squeeze,
   tensor,
   buffer,
+  sub,
+  exp,
+  pow,
 } from "@tensorflow/tfjs";
 import {
   type BaseRequest,
@@ -29,7 +32,7 @@ import {
   type PredictRequest,
   type TrainRequest,
 } from "./message-request.interface";
-import { gather, generateRange } from "../utilities";
+import { choicesWeighted, gather, generateRangeExclusive } from "../utilities";
 import {
   type PredictResponse,
   ResponseType,
@@ -67,7 +70,7 @@ function qlearningModel(): Sequential {
   return m;
 }
 
-const max_num_experiences = 1_000
+const max_num_experiences = 100_000
 const experiences: ExperienceReplayInstance[] = new Array(max_num_experiences);
 const exp_weights: number[] = new Array(max_num_experiences)
 const feature_num = 32
@@ -83,7 +86,7 @@ let target = qlearningModel();
 async function predict(msg: PredictRequest): Promise<PredictResponse> {
   const { jobId, state } = msg;
   const stateT = expandDims(state);
-  const pred = online.predict(stateT) as Tensor<Rank>;
+  const pred = target.predict(stateT) as Tensor<Rank>;
   const y = squeeze(argMax(pred, 1));
   return {
     mtype: ResponseType.PREDICT,
@@ -95,7 +98,6 @@ async function predict(msg: PredictRequest): Promise<PredictResponse> {
 async function addExperienceReplay(
   msg: ExperienceReplayRequest,
 ): Promise<void> {
-  experiences.push(...msg.data);
   for (let i = 0; i < msg.data.length; i++) {
     const idx = (current_experience_ptr + i) % max_num_experiences
     experiences[idx] = msg.data[i]
@@ -132,12 +134,11 @@ const optimizer = train.adam(1e-3);
 async function trainModel(msg: TrainRequest): Promise<TrainResponse> {
   steps += 1
   const { jobId } = msg;
-  if (experiences.length === 0) {
+  if (current_num_experiences === 0) {
     return { mtype: ResponseType.TRAIN, jobId, cost: Infinity };
   }
-  const indices = generateRange(0, current_num_experiences);
-  util.shuffle(indices);
-  const batch = gather(experiences, indices.slice(0, 64));
+  const indices = choicesWeighted(64, exp_weights.slice(0, current_num_experiences))
+  const batch = gather(experiences, indices);
   const cstates: Tensor[] = [];
   const actions: number[] = [];
   const rewards: Tensor[] = [];
@@ -155,13 +156,12 @@ async function trainModel(msg: TrainRequest): Promise<TrainResponse> {
   const nstatesT = concat(nstates);
   const terminatesT = concat(terminates);
 
-  if (steps !== 0 && steps % 100 === 0) {
-    online = qlearningModel()
-    target = qlearningModel()
-    console.log('RESET')
-  }
+  // if (steps !== 0 && steps % 200 === 0) {
+  //   online = qlearningModel()
+  //   target = qlearningModel()
+  //   console.log('RESET')
+  // }
   
-
   const cost =
     (await optimizer
       .minimize(() => {
@@ -171,22 +171,36 @@ async function trainModel(msg: TrainRequest): Promise<TrainResponse> {
         const qvalues_next_max = max(qvalues_next, 1, true);
         const qexpect = add(
           rewardsT,
-          mul(terminatesT, mul([1 - 1e-2], qvalues_next_max)),
+          mul(terminatesT, mul([1 - 1e-1], qvalues_next_max)),
         );
         return losses.meanSquaredError(qexpect, qvalues_max);
       }, true)
       ?.array()) ?? 0;
+  
+  const qvalues = online.predict(cstatesT) as Tensor<Rank>;
+    const qvalues_max = sum(mul(qvalues, oneHot(actions, 2)), 1, true);
+    const qvalues_next = target.predict(nstatesT) as Tensor<Rank>;
+    const qvalues_next_max = max(qvalues_next, 1, true);
+    const qexpect = add(
+      rewardsT,
+      mul(terminatesT, mul([1 - 1e-1], qvalues_next_max)),
+    );
+  const loss_arr = await pow(sub(qexpect, qvalues_max), 2).array() as number[][]
+  for (let i = 0; i < indices.length; i++) {
+    const idx = indices[i]
+    exp_weights[idx] = loss_arr[i][0]
+  }
 
   const targetWgt = target.getWeights();
   const onlineWgt = online.getWeights();
   if (targetWgt.length !== onlineWgt.length) {
     console.log("THERE IS SOMETHING WRONG");
   }
-  const newWgt = [];
+  const newWgt: Tensor<Rank>[] = new Array(targetWgt.length);
   for (let i = 0; i < targetWgt.length; i++) {
     const twgt = targetWgt[i];
     const owgt = onlineWgt[i];
-    newWgt.push(add(mul(twgt, [0.9]), mul(owgt, [0.1])));
+    newWgt[i] = add(mul(twgt, [0.99]), mul(owgt, [0.01]))
   }
   target.setWeights(newWgt);
 

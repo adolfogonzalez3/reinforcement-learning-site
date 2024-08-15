@@ -58,6 +58,9 @@ export class PongGameComponent implements AfterViewInit {
   public terminated: boolean;
   public hasWon: boolean;
   public currentSteps: number;
+  public currentGameSteps: number;
+  public currentGameNum: number;
+  public rendering: boolean;
   public wins: number;
   public losses: number;
   public timeouts: number;
@@ -81,6 +84,9 @@ export class PongGameComponent implements AfterViewInit {
     this.hasWon = false;
     this.maxSteps = 50_000
     this.currentSteps = 0
+    this.currentGameSteps = 0
+    this.currentGameNum = 0
+    this.rendering = false
     this.wins = 0
     this.losses = 0
     this.timeouts = 0
@@ -283,12 +289,12 @@ export class PongGameComponent implements AfterViewInit {
       },
     });
 
-    Render.run(renderer);
+    // Render.run(renderer);
 
     // const runner = Runner.create()
     const performAction = (action: number) => {
       const x = plankOne.position.x;
-      const y = plankOne.position.y + 0.5 * (action === 0 ? 1 : -1);
+      const y = plankOne.position.y + 0.1 * (action === 0 ? 1 : -1);
       const MIN_PLANK_HEIGHT =
         this.gameDims.BORDER + this.gameDims.PLANK_HEIGHT / 2;
       const MAX_PLANK_HEIGHT =
@@ -333,8 +339,9 @@ export class PongGameComponent implements AfterViewInit {
       }
     };
 
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const agentLoop = async () => {
-      const skip = 100_000;
+      const skip = 10_000;
       let iteration = 0;
       while (true) {
         const cstate_i = [
@@ -361,8 +368,19 @@ export class PongGameComponent implements AfterViewInit {
         } else {
           action = await this.agentService.predict(cstate);
         }
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < 64; i++) {
           performAction(action);
+        }
+        this.currentGameSteps += 1
+        if (iteration > skip && this.currentGameNum % 200 < 3) {
+          if (!this.rendering) {
+            Render.run(renderer)
+            this.rendering = true
+          }
+          await sleep(100)
+        } else if (this.rendering) {
+          Render.stop(renderer)
+          this.rendering = false
         }
         const nstate_i = [
           plankOne.position.x / this.gameDims.GAME_WIDTH - 0.5,
@@ -377,7 +395,7 @@ export class PongGameComponent implements AfterViewInit {
         this.agentService.addExperienceReplay([
           {
             cstate,
-            reward: this.terminated ? (this.hasWon ? 1 : -1) : 0.1,
+            reward: this.terminated ? (this.hasWon ? 10 : -10) : 1,
             action,
             nstate,
             terminated: this.terminated,
@@ -385,8 +403,10 @@ export class PongGameComponent implements AfterViewInit {
         ]);
         if (this.terminated) {
           this.terminated = false;
+          this.currentGameSteps = 0
+          this.currentGameNum += 1
         }
-        if (iteration > skip && iteration % 500 === 0) {
+        if (iteration > skip && iteration % 32 === 0 && !this.rendering) {
           this.cost = await this.agentService.train();
           if (this.chart === undefined) {
             return;
